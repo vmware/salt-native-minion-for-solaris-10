@@ -206,6 +206,14 @@ Support can be found in various Salt communities, such as, Slack: https://saltst
 ## Contributing
 
 Salt support on Solaris 10 is a community-run project and is open to all contributions.
+The salt-native-minion-for-solaris-10 project team welcomes contributions from
+the community. Before you start working with salt-native-minion-for-solaris-10,
+please read our [Developer Certificate of Origin](https://cla.vmware.com/dco).
+All contributions to this repository must be signed as described on that page.
+Your signature certifies that you wrote the patch or have the right to pass it
+on as an open-source patch. For more detailed information,
+refer to [CONTRIBUTING.md](CONTRIBUTING.md).
+
 The regular Open Source methods of contributing to a project apply:
 
 *   Fork the project
