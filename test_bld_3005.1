@@ -1,0 +1,268 @@
+#!/usr/bin/bash
+
+# Copyright 2019-2022 VMware, Inc.
+# SPDX-License-Identifier: Apache-2
+
+# shellcheck disable=SC2035,SC2038,SC2061,SC2129,SC2002
+
+export CICD_SALT_DIST_VERSION="3005.1"
+export CICD_SALT_VERSION="3005.1"
+export CICD_SALT_RELEASE="1"
+export CICD_SALT_DATE="Thu Jan 1 1970"
+export CICD_SALT_LOCATION="salt"
+
+## if CICD_SALT_DEV_BRANCH is not master assume contains tagged version or branch desired, v3003.1, freeze
+## export CICD_SALT_DEV_BRANCH="master"
+export CICD_SALT_DEV_BRANCH="v3005.1"
+
+export CICD_ZEROMQ_VER="4.3.3"
+export CICD_PYTHON_VER="3.9.14"
+export OPT_SALT_PATH="tiamat"
+export PYINSTALLER_VER="5.5"
+
+oldpwd=$(pwd)
+date
+svcadm disable svc:/network/ntp:default
+ntpdate -s time.nist.gov
+date
+## clean up any lingering build product
+rm -fR dist
+rm -fR build
+rm -fR dev_python3
+if [[ -h "/${OPT_SALT_PATH}" ]]; then rm -f "/${OPT_SALT_PATH}"; fi
+if [[ -d "/opt/saltstack" ]]; then rm -fR "/opt/saltstack"; fi
+if [[ -d "/opt/local/etc/salt" ]]; then rm -fR "/opt/local/etc/salt"; fi
+if [[ -f "/usr/bin/salt-call" ]]; then rm -f "/usr/bin/salt-call"; fi
+if [[ -f "/usr/bin/salt-minion" ]]; then rm -f "/usr/bin/salt-minion"; fi
+## on to the build
+mkdir -p dev_python3
+mkdir -p /usr/local/lib
+mkdir -p /usr/local/bin
+mkdir -p /export/home/root
+export HOME=/export/home/root
+## setup tools on the machine
+export PATH=/opt/local/bin:/opt/csw/bin:/opt/csw/sbin:/opt/csw/gnu:/usr/sbin:/usr/bin:/usr/sfw/bin:/usr/ccs/bin
+./setup_machine
+command -v curl
+crle -l /usr/local/lib:/opt/local/lib:/opt/csw/lib:/lib:/usr/lib
+export LD_LIBRARY_PATH=/usr/local/lib:/opt/local/lib:/opt/csw/lib:$LD_LIBRARY_PATH
+echo "HOME is ,${HOME},"
+rm -fR "${HOME}/.cache/pip"   # clean out cache
+## Python CICD_PYTHON_VER
+cd "${oldpwd}" || exit
+cp "Python-${CICD_PYTHON_VER}.tgz" dev_python3/
+cd dev_python3 || exit
+## Solaris 10 is old and ssh has issues, using provided version of Python 3
+## wget https://www.python.org/ftp/python/${CICD_PYTHON_VER}/Python-${CICD_PYTHON_VER}.tgz
+gunzip -c Python-${CICD_PYTHON_VER}.tgz | tar xvf -
+cd "Python-${CICD_PYTHON_VER}" || exit
+cd Modules || exit
+patch -N < "${oldpwd}/solaris10_py378_sktmodule.patch"
+cd "${oldpwd}/dev_python3/Python-${CICD_PYTHON_VER}/Modules/Lib/ctypes" || exit
+patch -N < "${oldpwd}/solaris10_crle.patch"
+cd "${oldpwd}/dev_python3/Python-${CICD_PYTHON_VER}/Modules" || exit
+./configure --with-openssl=/opt/csw/ --enable-optimizations --enable-shared --enable-ipv6 LDFLAGS='-L/opt/local/lib -I/opt/csw/include -L/opt/csw/lib -R/opt/local/lib' PKG_CONFIG_PATH=/opt/csw/lib/amd64/pkgconfig/ CPPFLAGS='-L/opt/local/lib -I/opt/csw/include -DFFI_NO_RAW_API -I/opt/csw/lib/libffi-3.2.1/include -L/opt/csw/lib -R/opt/local/lib' CFLAGS='-L/opt/local/lib -I/opt/csw/include -DFFI_NO_RAW_API -I/opt/csw/lib/libffi-3.2.1/include -L/opt/csw/lib -R/opt/local/lib'
+make altinstall
+ls -alh /usr/local/bin/python3.9*
+cd /usr/bin || exit
+ln -sf /usr/local/bin/python3.9 python3
+ln -sf /usr/local/bin/python3.9 python3.9
+ln -sf /usr/local/bin/python3.9-config python3-config
+ln -sf /usr/local/bin/pip3.9 pip3
+export PATH=/usr/local/bin:$PATH
+export LD_RUN_PATH=/usr/local/lib:$LD_RUN_PATH
+cd "${oldpwd}" || exit
+## PyInstaller bootloader for Solaris 10
+## see https://pyinstaller.readthedocs.io/en/stable/bootloader-building.html#building-for-aix
+## ensure empty environment
+rm -fR "${oldpwd}/dev_pyinstaller"
+mkdir -p "${oldpwd}/dev_pyinstaller"
+cd "${oldpwd}/dev_pyinstaller" || exit
+## pip3 config set global.trusted-host "pypi.org files.pythonhosted.org"
+## pip3 config --global set global.trusted-host "pypi.org files.pythonhosted.org"
+python3 -m pip install pyinstaller-hooks-contrib
+python3 -m pip install altgraph
+python3 -m pip install importlib-metadata==4.11.3
+python3 -m pip install wheel
+python3 -m pip install pop-config==9.0.0
+if [[ "sparc" = "$(uname -p)" ]]; then git config --global http.sslverify false; echo "set sslverify to false"; fi  # need this on Sparc
+## Sparc too old and git clone now failing
+## git clone -b v4.2 https://github.com/pyinstaller/pyinstaller.git
+cp "${oldpwd}/pyinstaller-${PYINSTALLER_VER}.tar.gz" "${oldpwd}/dev_pyinstaller/"
+cd "${oldpwd}/dev_pyinstaller" || exit
+gzip -d "pyinstaller-${PYINSTALLER_VER}.tar.gz"
+tar -xvf "pyinstaller-${PYINSTALLER_VER}.tar"
+## could not get it or waf to work well, so simple solution of 2-3 days of trying, create a dummy executable /opt/freeware/bin/strip file which does nothing
+echo '#!/opt/csw/bin/bash' > /opt/csw/bin/strip
+echo "# dummy" >> /opt/csw/bin/strip
+chmod 755 /opt/csw/bin/strip
+chown root:bin /opt/csw/bin/strip
+cd "pyinstaller-${PYINSTALLER_VER}/bootloader/src" || exit
+patch -N < "${oldpwd}/solaris10_pyinst_global_55.patch"
+patch -N < "${oldpwd}/solaris10_pyinst_utils_55.patch"
+cd "${oldpwd}/dev_pyinstaller/pyinstaller-${PYINSTALLER_VER}/bootloader" || exit
+python3 ./waf configure all --gcc --target-arch=32bit
+cd "${oldpwd}/dev_pyinstaller/pyinstaller-${PYINSTALLER_VER}" || exit
+export PYINSTALLER_DIR=""
+PYINSTALLER_DIR=$(pwd)
+python3 setup.py install
+cd "${oldpwd}" || exit
+## Build zeromq for Solaris 10
+rm -fR dev_zeromq
+mkdir dev_zeromq
+cp zeromq-${CICD_ZEROMQ_VER}.tar.gz dev_zeromq/
+cd dev_zeromq || exit
+## Solaris 10 is old and ssh has issues, using provided version of zeromq
+## SPARC wget --no-check-certificate https://github.com/zeromq/libzmq/releases/download/v${CICD_ZEROMQ_VER}/zeromq-${CICD_ZEROMQ_VER}.tar.gz  --secure-protocol=TLSv1_2
+## wget https://github.com/zeromq/libzmq/releases/download/v${CICD_ZEROMQ_VER}/zeromq-${CICD_ZEROMQ_VER}.tar.gz  --secure-protocol=TLSv1_2
+tar -xvzf zeromq-${CICD_ZEROMQ_VER}.tar.gz
+## allow for tar giving id 1000 which isn't even valid on the system :shrug:
+chown root:root zeromq-${CICD_ZEROMQ_VER}
+cd "zeromq-${CICD_ZEROMQ_VER}" || exit
+./configure
+gmake
+gmake install
+cd "${oldpwd}" || exit
+python3 -m pip install tiamat==7.10.7
+# build Salt
+export CICD_SALT_DATE=""
+export CICD_SALT_TAR_GZ_NAME=""
+export CICD_SALT_LOCATION_NB=""
+export CICD_SALT_VERSION=""
+CICD_SALT_DATE=$(date +"%a %b %0d %Y")
+## export CICD_SALT_LOCATION_NB="git+https://github.com/saltstack/salt@${CICD_SALT_DEV_BRANCH}#egg=salt"
+cd "${oldpwd}" || exit
+## rm -fR dev_salt
+## mkdir dev_salt
+cd dev_salt || exit
+## Currently http still works, https has issues due to age with GitHub for Salt
+## git clone -v -b ${CICD_SALT_DEV_BRANCH} https://github.com/saltstack/salt.git
+## git clone -v -b ${CICD_SALT_DEV_BRANCH} http://github.com/saltstack/salt.git
+cd salt || exit
+## python3 setup.py -q sdist
+cd dist || exit
+ls -alh
+## Note: use downloaded Salt location as Solaris 10 Sparc machine is too slow
+##      and errors out during install of salt in requirements file, even from PyPI
+CICD_SALT_TAR_GZ_NAME=$(ls salt-${CICD_SALT_DIST_VERSION}*.tar.gz)
+CICD_SALT_LOCATION_NB=$(pwd)/${CICD_SALT_TAR_GZ_NAME}
+ls -alh
+CICD_SALT_VERSION=$(echo "${CICD_SALT_TAR_GZ_NAME}" | sed s/salt-// | sed s/.tar.gz//)
+echo "$CICD_SALT_VERSION"
+echo "$CICD_SALT_RELEASE"
+echo "CI_PROJECT_DIR is ${CI_PROJECT_DIR}"
+echo "$CICD_SALT_LOCATION"
+echo "$CICD_SALT_LOCATION_NB"
+cd "${oldpwd}" || exit
+rm -f solaris10_requirements.txt
+cp requirements.txt solaris10_requirements.txt
+sed -i 's&SALT_LOCATION&'"$CICD_SALT_LOCATION_NB"'&' solaris10_requirements.txt
+cat solaris10_requirements.txt
+export CICD_SALT_VERSION_ADJ=""
+CICD_SALT_VERSION_ADJ=${CICD_SALT_VERSION}
+cd "${oldpwd}" || exit
+## now build
+sed -i 's&PYINSTALLER_LOCATION&'"${PYINSTALLER_DIR}"'&' build.conf
+cat build.conf
+##  tiamat build -c build.conf
+tiamat --log-file "${HOME}/tiamat.log" --log-level TRACE build -c build.conf 2>&1 | tee "${HOME}/mytiamat.log"
+if [[ ! -f "dist/run/run" ]]; then
+  echo "Failed to build tiamat, no dist/run/run" | tee -a ~/mytiamat.log
+  exit 1
+fi
+find dist -name __pycache__ | xargs rm -fR
+find dist -name "*.pyc" | xargs rm -f
+find dist -name "*.pyo" | xargs rm -f
+rm -f dist/run/setuptools/command/"launcher manifest.xml"
+rm -f dist/run/setuptools/"script (dev).tmpl"
+## NOW TO PACKAGE IT
+cd "${oldpwd}" || exit
+rm -fR dev_pkg
+mkdir dev_pkg
+## ensure no user owning files but root which is used to build
+chown -R root:root *
+mkdir -p dev_pkg/opt/saltstack/salt
+chown root:sys dev_pkg/opt
+mkdir -p dev_pkg/opt/saltstack/salt/config.dist
+mkdir -p dev_pkg/opt/local/etc/salt
+mkdir -p dev_pkg/opt/local/etc/salt/minion.d
+mkdir -p dev_pkg/opt/local/etc/salt/pki/minion
+cp -a "${oldpwd}/dist/run" dev_pkg/opt/saltstack/salt/
+# keep copy in /opt/saltstack/salt in case install into sparse zone where /usr is read-only
+cp -a "${oldpwd}/salt-minion" "${oldpwd}/salt-call dev_pkg/opt/saltstack/salt/"
+cp -a dev_salt/salt/pkg/solaris/salt-minion.xml dev_pkg/opt/saltstack/salt/config.dist/salt-minion-zone.xml
+cp -a dev_salt/salt/pkg/solaris/salt-minion.xml dev_pkg/opt/saltstack/salt/config.dist/salt-minion-global.xml
+cp -a dev_salt/salt/conf/minion dev_pkg/opt/local/etc/salt/
+## remove x permission otherwise errors due to no python version specified
+chmod 644 dev_pkg/opt/saltstack/salt/run/pip/_vendor/appdirs.py
+chmod 644 dev_pkg/opt/saltstack/salt/run/pip/_vendor/chardet/cli/chardetect.py
+chmod 644 dev_pkg/opt/saltstack/salt/run/pip/_vendor/requests/certs.py
+chmod 644 dev_pkg/opt/saltstack/salt/run/pkg_resources/_vendor/appdirs.py
+## cleanup dev_salt save space
+## rm -fR dev_salt
+perl -pi -e 's/\/opt\/local\/bin/\/usr\/bin/' dev_pkg/opt/saltstack/salt/config.dist/salt-minion-global.xml
+perl -pi -e 's/\/etc\/salt/\/opt\/local\/etc\/salt/' dev_pkg/opt/saltstack/salt/config.dist/salt-minion-global.xml
+perl -pi -e 's/\/opt\/local\/bin/\/opt\/saltstack\/salt/' dev_pkg/opt/saltstack/salt/config.dist/salt-minion-zone.xml
+perl -pi -e 's/\/etc\/salt/\/opt\/local\/etc\/salt/' dev_pkg/opt/saltstack/salt/config.dist/salt-minion-zone.xml
+## --WARNING HERE BE DRAGONS ---
+## This is where I left off in the package creation process
+## The goal was to use chrpath to ensure that every .so in the Salt package
+## would look first in the /opt/saltstack/salt/run hierarchy for libraries
+##
+## there is a problem with using chrpath in Solaris Upd 8, as the elf dynamic string table
+## can only reduce runpath/rpath sizes.  Later versions of the elf dynamic string table
+## have an extra 0x200 bytes to allow for larger runpaths, /usr/include/sys/link.h DT_SUNW_STRPAD
+## hence work-around is to use symbolic links fitting inside existing runpath '/opt/csw/lib:/opt/local/lib'
+## noting that a large number of *.so files runpath or rpath is '/opt/csw/lib'
+##
+## using OPT_SALT_PATH='tiamat' which is a symbolic link to /opt/saltstack/salt/run directory (a little advertizing)
+##
+cd "${oldpwd}/dev_pkg" || exit
+find opt/saltstack/salt/run -name \*.so -exec chrpath -r "/${OPT_SALT_PATH}" {} \;
+find opt/saltstack/salt/run -name \*.so\.* -exec chrpath -r "/${OPT_SALT_PATH}" {} \;
+cp -a opt /
+cd "${oldpwd}" || exit
+rm -fR /tmp/pkgbuild
+mkdir -p /tmp/pkgbuild
+echo "/opt" > /tmp/pkgbuild/files
+echo "/opt/local" >> /tmp/pkgbuild/files
+echo "/opt/local/etc" >> /tmp/pkgbuild/files
+find /opt/saltstack -print >> /tmp/pkgbuild/files
+find /opt/local/etc/salt -print >> /tmp/pkgbuild/files
+echo "i pkginfo" > /tmp/pkgbuild/Prototype
+echo "i postinstall" >> /tmp/pkgbuild/Prototype
+cat /tmp/pkgbuild/files | pkgproto >> /tmp/pkgbuild/Prototype
+# Create pkginfo and postinstall as needed -set correct version number, architecture, etc.
+export PKG_ARCH=
+export PKG_SUFFIX=
+if [[ $(uname -m) = 'i86pc' ]];then PKG_ARCH='i386'; PKG_SUFFIX='x86'; else PKG_ARCH='sun4u'; PKG_SUFFIX='sparc'; fi
+export CURR_DATE=""
+CURR_DATE=$(date '+%d%h%Y')
+cp solaris10_pkginfo pkginfo
+sed -i 's&SALT_CURR_DATE&'"${CURR_DATE}"'&' pkginfo
+sed -i 's&SALT_CURR_VERSION&'"${CICD_SALT_VERSION_ADJ}"'&' pkginfo
+sed -i 's&SALT_PKG_ARCH&'"${PKG_ARCH}"'&' pkginfo
+cat pkginfo
+cp pkginfo /tmp/pkgbuild/
+cp solaris10_postinstall postinstall
+sed -i 's&SALT_ROOT_SHORT_PATH&'"$OPT_SALT_PATH"'&' postinstall
+cat postinstall
+## now build the Solaris 10 package with everything set up
+cp postinstall /tmp/pkgbuild
+cd /tmp/pkgbuild || exit
+pkgmk -o -r / -d /tmp/pkgbuild -f Prototype
+# once the package is built, clean up files before creating tarball
+## rm -f Prototype files postinstall pkginfo
+rm -f "${oldpwd}/Prototype" "${oldpwd}/files" "${oldpwd}/postinstall" "${oldpwd}/pkginfo"
+mv Prototype "${oldpwd}/Prototype_lastbld"
+mv files "${oldpwd}/files_lastbld"
+mv postinstall "${oldpwd}/postinstall_lastbld"
+mv pkginfo "${oldpwd}/pkginfo_lastbld"
+## tar it up, ensure use Solaris tar rather than gnu, otherwise Longlink errors
+## if compress gnu and expand with Solaris
+rm -f "${oldpwd}/salt-${CICD_SALT_VERSION_ADJ}-${CICD_SALT_RELEASE}-solaris-${PKG_SUFFIX}.tar"
+rm -f "${oldpwd}/salt-${CICD_SALT_VERSION_ADJ}-${CICD_SALT_RELEASE}-solaris-${PKG_SUFFIX}.tar.gz"
+/usr/sbin/tar -cvf "${oldpwd}/salt-${CICD_SALT_VERSION_ADJ}-${CICD_SALT_RELEASE}-solaris-${PKG_SUFFIX}.tar" .
+gzip "${oldpwd}/salt-${CICD_SALT_VERSION_ADJ}-${CICD_SALT_RELEASE}-solaris-${PKG_SUFFIX}.tar"
+cd "${oldpwd}" || exit
+ls -alh *.tar*

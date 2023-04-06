@@ -1,0 +1,35 @@
+# Copyright 2019-2022 VMware, Inc.
+# SPDX-License-Identifier: Apache-2
+
+# building for Python 3 Solaris 10 native minion
+
+## Cython required for PEP538, 540, UTF-8 issue for 'C' locales
+## Cython==0.29.21
+Cython==0.29.30
+
+
+# using cffi 1.15.0 has libffi-c3922e72.so.8.1.0 issue
+cffi==1.14.3
+
+## picking specific versions of deps for Salt which issues >=2.18
+pycparser==2.17
+
+cryptography==3.1.1
+
+pycryptodomex==3.14.1
+
+bcrypt==3.2.2
+importlib-metadata==4.11.3
+msgpack==1.0.3
+
+SALT_LOCATION
+
+distro
+
+# building for Solaris 10
+M2Crypto>=0.35.2
+
+watchdog
+setproctitle
+timelib
+psutil

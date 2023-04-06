@@ -1,0 +1,11 @@
+--- pyi_utils.c	Thu Sep 22 20:20:10 2022
++++ pyi_utils.c.new	Tue Oct 11 10:30:50 2022
+@@ -331,7 +331,7 @@
+ 
+     GetTempPathW(PATH_MAX, wchar_buffer);
+ 
+-    swprintf(prefix, 16, L"_MEI%d", getpid());
++    swprintf(prefix, 16, L"_MEI%d", (unsigned int) getpid());
+ 
+     /*
+      * Windows does not have a race-free function to create a temporary

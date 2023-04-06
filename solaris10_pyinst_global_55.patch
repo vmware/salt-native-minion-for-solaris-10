@@ -1,0 +1,20 @@
+--- pyi_global.c	Thu Sep 22 20:20:10 2022
++++ pyi_global.c.new	Tue Oct 11 14:35:35 2022
+@@ -161,7 +161,7 @@
+     int pid_len;
+ 
+     /* Add pid to the message */
+-    pid_len = sprintf(msg, "[%d] ", getpid());
++    pid_len = sprintf(msg, "[%d] ", (unsigned int) getpid());
+ 
+     va_start(args, fmt);
+     vsnprintf(&msg[pid_len], MBTXTLEN-pid_len, fmt, args);
+@@ -210,7 +210,7 @@
+     va_list v;
+ 
+     /* Sent 'LOADER text' messages to stderr. */
+-    fprintf(stderr, "[%d] ", getpid());
++    fprintf(stderr, "[%d] ", (unsigned int) getpid());
+     va_start(v, fmt);
+     vprintf_to_stderr(fmt, v);
+     va_end(v);

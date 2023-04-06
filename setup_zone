@@ -1,0 +1,155 @@
+#!/usr/bin/bash
+
+# Copyright 2019-2022 VMware, Inc.
+# SPDX-License-Identifier: Apache-2
+
+# shellcheck disable=SC2001,SC2034,SC2015,SC2129
+
+set -o functrace
+set -o pipefail
+
+## using bash for now, not path is for Solaris opencsw
+## run this script as root
+
+# SCRIPT_VERSION='2022.11.17.01'
+
+
+## helper functions
+
+_timestamp() {
+    date "+%Y-%m-%d %H:%M:%S:"
+}
+
+_log() {
+    echo "$1" | sed "s/^/$(_timestamp) /" >>"${LOGGING}"
+}
+
+# Both echo and log
+_display() {
+    echo "$1"
+    _log "$1"
+}
+
+_error() {
+    msg="ERROR: $1"
+    echo "$msg" 1>&2
+    echo "$(_timestamp) $msg" >>"${LOGGING}"
+    echo "One or more errors found. See ${LOGGING} for details." 1>&2
+    exit 1
+}
+
+_warning() {
+    msg="WARNING: $1"
+    echo "$msg" 1>&2
+    echo "$(_timestamp) $msg" >>"${LOGGING}"
+}
+
+_usage() {
+    echo "usage: $0 <zone name> <shared IPv4 address>"
+    echo "    build named zone on Solaris 10 with network address "
+    echo "    adds named zone to /export/home if it does not exist"
+    echo "    creates zone as a Root Zone with read-write access to"
+    echo "    /usr, /.sbin, /lib and /platform"
+    echo "    assumes network adapter hme0 if Sparc, e1000g0 if Intel"
+    echo " "
+    echo "    If zone exists and running, nothing is done and it is left alone"
+    echo "    If zone exists and installed, it is started and left alone"
+    echo "    If zone does not exist, it is created, but will need the following"
+    echo "    commands run to configure it:  zlogin -C <zone name>"
+    echo " "
+}
+
+
+## work functions
+
+
+
+#################################### MAIN ####################################
+
+## static definitions
+
+CURRDIR=$(pwd)
+
+oldpwd=${CURRDIR}
+
+#check platform
+ARCH_x86="i86pc"
+ARCH_SPARC="sun4u"
+ARCH=
+
+if [[ $(uname -m) = 'i86pc' ]];then
+    ARCH=${ARCH_x86}
+    ARCH_PROC='amd64'
+    NET_NIC='e1000g0'
+elif [[ $(uname -m) = 'sun4u' ]]; then
+    ARCH=${ARCH_SPARC}
+    ARCH_PROC='sparcv9'
+    NET_NIC='hme0'
+else
+    _error "$0 does not support this platform"
+fi
+
+# set logging information
+## want verbose while developing
+VERBOSE=1
+LOGGING="/dev/null"
+
+log_file_format="${CURRDIR}/$0-${OSRELEASE}-${ARCH}.%Y%m%d%H%M%S.log"
+log_file="$(date \"+"${log_file_format}"\")"
+
+if [[ ${VERBOSE} -ne 0 ]];then
+    LOGGING="${log_file}"
+else
+LOGGING="/dev/null"
+fi
+
+export oldpwd ARCH ARCH_PROC NET_NIC
+export PATH=/usr/sbin:/usr/bin:/usr/sfw/bin:/usr/ccs/bin
+
+_display "$0: PATH is now set to '$PATH'"
+
+if [[ $# -ne 2 ]];then
+    _usage
+    exit 0
+fi
+
+ZONE_NAME="$1"
+IP_ADDR="$2"
+
+# check if zone exists
+zoneadm -z "${ZONE_NAME}" list -v | grep -w "${ZONE_NAME}" && {
+    _display "$0: Zone does exists"
+    zoneadm -z "${ZONE_NAME}" list -v | grep -w "${ZONE_NAME}" | grep -w 'running' && {
+        _display "$0: Zone exists and running, will leave alone"
+        exit 0
+    } || {
+            zoneadm -z "${ZONE_NAME}" list -v | grep -w "${ZONE_NAME}" | grep -w 'installed' && {
+            _display "$0: Zone exists and installed, will start it"
+            zoneadm -z "${ZONE_NAME}" boot
+            exit 0
+        }
+    }
+    _error "$0: Zone ${ZONE_NAME} is not in installed or running state"
+} || {
+    _display "$0: Zone does not exist, creating it"
+    mkdir -p "/export/home/${ZONE_NAME}"
+    chmod 700 "/export/home/${ZONE_NAME}"
+    tmpfile=$(mktemp /tmp/setup_zone_$$.tmp)
+    echo "create -b"> "${tmpfile}"
+    echo "set zonepath=/export/home/${ZONE_NAME}" >> "${tmpfile}"
+    echo "set autoboot=true" >> "${tmpfile}"
+    echo "add net" >> "${tmpfile}"
+    echo "set physical=${NET_NIC}" >> "${tmpfile}"
+    echo "set address=${IP_ADDR}" >> "${tmpfile}"
+    echo "end" >> "${tmpfile}"
+    echo "verify" >> "${tmpfile}"
+    echo "commit" >> "${tmpfile}"
+    echo "exit" >> "${tmpfile}"
+    zonecfg -z "${ZONE_NAME}" -f "${tmpfile}"
+    zonecfg -z "${ZONE_NAME}" info
+    zoneadm -z "${ZONE_NAME}" verify
+    zoneadm -z "${ZONE_NAME}" install
+    zoneadm -z "${ZONE_NAME}" boot
+    zoneadm -z "${ZONE_NAME}" list -v
+    rm -f "${tmpfile}"
+}

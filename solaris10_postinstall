@@ -1,0 +1,20 @@
+#!/usr/bin/bash
+/usr/bin/rm -fR /tiamat
+/usr/bin/ln -f -s /opt/saltstack/salt/run /SALT_ROOT_SHORT_PATH
+
+## allow for zone /usr is read-only
+mount | grep '^/usr' | grep 'read only' && {
+    /usr/bin/cp -f /opt/saltstack/salt/config.dist/salt-minion-zone.xml /opt/saltstack/salt/config.dist/salt-minion.xml
+    echo "Salt Solaris package installation complete."
+    echo "Add /opt/saltstack/salt to your PATH environment variable if"
+    echo "access to salt-call and salt-minion directly from the CLI is desired"
+    echo "Edit your /opt/local/etc/salt/minion file and then run"
+    echo "   # svcadm enable salt-minion"
+} || {
+    /usr/bin/cp -f /opt/saltstack/salt/config.dist/salt-minion-global.xml /opt/saltstack/salt/config.dist/salt-minion.xml
+    /usr/bin/cp -f /opt/saltstack/salt/salt-call /opt/saltstack/salt/salt-minion /usr/bin/
+    echo "Salt Solaris package installation complete."
+    echo "Edit your /opt/local/etc/salt/minion file and then run"
+    echo "   # svcadm enable salt-minion"
+}
+/usr/sbin/svccfg import /opt/saltstack/salt/config.dist/salt-minion.xml

@@ -1,0 +1,241 @@
+#!/usr/bin/bash
+
+# Copyright 2019-2022 VMware, Inc.
+# SPDX-License-Identifier: Apache-2
+
+# shellcheck disable=SC2001,SC2034,SC2128
+
+set -o functrace
+set -o pipefail
+
+## using bash for now, not path is for Solaris opencsw
+## run this script as root
+
+# SCRIPT_VERSION='2022.11.17.01'
+
+
+## helper functions
+
+_timestamp() {
+    date "+%Y-%m-%d %H:%M:%S:"
+}
+
+_log() {
+    echo "$1" | sed "s/^/$(_timestamp) /" >>"${LOGGING}"
+}
+
+# Both echo and log
+_display() {
+    echo "$1"
+    _log "$1"
+}
+
+_error() {
+    msg="ERROR: $1"
+    echo "$msg" 1>&2
+    echo "$(_timestamp) $msg" >>"${LOGGING}"
+    echo "One or more errors found. See ${LOGGING} for details." 1>&2
+    exit 1
+}
+
+_warning() {
+    msg="WARNING: $1"
+    echo "$msg" 1>&2
+    echo "$(_timestamp) $msg" >>"${LOGGING}"
+}
+
+_usage() {
+    echo "usage: $0"
+    echo "    build saltstack for 32-bit solaris 10 upd 8"
+    echo "    expects tools (location for this script) and"
+    echo "    src sub-dirs from location the script is run"
+    echo "    <dir>/tools/$0, <dir>/src"
+    echo " "
+}
+
+
+## work functions
+
+
+_install_pkgutil() {
+    cd "${oldpwd}" || exit
+    _display "$0:$FUNCNAME installing base dependencies with pkgutil"
+
+    ## the addition of vim is to allow for a better editing experience
+    pkgutil -y -i gcc4core gcc4g++ libgcc_s1 \
+        py_setuptools gmake libyaml_dev libssl1_0_0 libssl_dev libssh2_dev libmpfr_dev \
+        git cmake mysql56_dev mysql56client libtool automake autoconf swig libncurses_dev \
+        berkeleydb48_devel ggettext_dev libncursesw5 libreadline_dev \
+        libsqlite3_dev libgdbm_dev gtar libffi_dev libz_dev curl wget chrpath vim lsof \
+        libreadline6 libgdbm4 libgdbm_dev libbz2_1_0 libbz2_dev libffi6 tk tk_dev pkgconfig \
+        libsodium23 libsodium_dev 2>&1 | tee -a "$LOGGING"
+    _ret=$?
+    if [[ $_ret -ne 0 ]];then
+       _warning "$0:$FUNCNAME failed to install utilities with pkgutil, retcode '${_ret}'"
+    fi
+
+    ## adjust libstdc++.so since currently it leaves it at .20, should be .21
+    ## appears to have been fixed in Update 11
+    cd /opt/csw/lib/ || exit
+    rm -f libstdc++.so
+    ln -s libstdc++.so.6.0.21 libstdc++.so
+    if [[ $(uname -m) = 'i86pc' ]];then
+        cd amd64 || exit
+        rm -f libstdc++.so
+        ln -s libstdc++.so.6.0.21 libstdc++.so
+    elif [[ $(uname -m) = 'sun4u' ]]; then
+        cd sparcv9 || exit
+        rm -f libstdc++.so
+        ln -s libstdc++.so.6.0.21 libstdc++.so
+    else
+        _error "$0 does not support this platform"
+    fi
+
+    if [[ ! -e "/opt/csw/lib/libintl.so" ]] ; then
+        cd /opt/csw/lib || exit
+        ln -s libintl.so.9 libintl.so
+    fi
+
+    if [[ ! -e "/opt/csw/lib/libintl.so" ]] ; then
+        cd /opt/csw/lib || exit
+        ln -s libintl.so.9 libintl.so
+    fi
+
+    cd "${oldpwd}" || exit
+}
+
+#################################### MAIN ####################################
+
+## static definitions
+
+CURRDIR=$(pwd)
+
+## oldpwd=/export/home/root/opensource
+oldpwd=${CURRDIR}
+
+# Always 32-bit right now
+BYTEWIDTH='32bit'
+
+# OS Release
+# get the OS level for Solaris that we are build on
+SYSRELEASE_VER=$(uname -r)
+OSRELEASE_VER=$(echo "${SYSRELEASE_VER}" | cut -d '.' -f2 )
+OSRELEASE_DOTTED="solaris-2.${OSRELEASE_VER}"
+OSRELEASE="solaris-2_${OSRELEASE_VER}"
+
+DEFAULT_INTEL_ZONE_IP_ADDR='192.168.0.120'
+TEST_ZONE_NAME='testzone'
+
+#check platform
+ARCH_x86="i86pc"
+ARCH_SPARC="sun4u"
+ARCH=
+
+if [[ $(uname -m) = 'i86pc' ]];then
+    ARCH=${ARCH_x86}
+    ARCH_PROC='amd64'
+elif [[ $(uname -m) = 'sun4u' ]]; then
+    ARCH=${ARCH_SPARC}
+    ARCH_PROC='sparcv9'
+else
+    _error "$0 does not support this platform"
+fi
+
+# set logging infomation
+## want verbose while developing
+VERBOSE=1
+LOGGING="/dev/null"
+
+log_file_format="${CURRDIR}/$0-${OSRELEASE}-${ARCH}.%Y%m%d%H%M%S.log"
+log_file="$(date \"+"${log_file_format}"\")"
+
+if [[ ${VERBOSE} -ne 0 ]];then
+    LOGGING="${log_file}"
+else
+LOGGING="/dev/null"
+fi
+
+export CICD_ZEROMQ_VER="4.3.3"
+export OPT_SALT_PATH='tiamat'      ## a little advertizing, an work-around runpath size issues
+
+export oldpwd ARCH ARCH_PROC BYTEWIDTH CICD_ZEROMQ_VER OPT_SALT_PATH
+export PATH=/opt/local/bin:/opt/csw/bin:/opt/csw/sbin:/opt/csw/gnu:/usr/sbin:/usr/bin:/usr/sfw/bin:/usr/ccs/bin
+
+_display "$0: PATH is now set to '$PATH'"
+
+if [[ $# -gt 0 ]];then
+    _usage
+    exit 0
+fi
+
+
+# INCREASE THE NUMBER OF FILE HANDLES on the build systema
+INIT_NO_FILES=$(ulimit -n)
+_display "$0 initial number of files limit '${INIT_NO_FILES}'"
+
+if [[ ${INIT_NO_FILES} -lt 4000 ]];then
+    ulimit -n 16000 || {
+        _error "$0 failed to increase number of files limit from '${INIT_NO_FILES}' to 16000";
+    } && {
+        _display "$0 increased number of files limit from '${INIT_NO_FILES}' to 16000";
+    }
+    ulimit -s 24000 || {
+        _error "$0 failed to increase stack limit to 24000";
+    } && {
+        _display "$0 increased stack limit to 24000";
+    }
+fi
+
+# test if need to install pkgutils
+if [[ ! -f "/opt/csw/bin/pkgutil" ]];then
+    ## Cannot just copy then over since this causes issues with _install_pkgutil
+    ## since pkgutil install of pkgs checks that some files placed in /opt/csw/bin etc
+    ## and complains and prompts for proceeding.
+    ./pkgutil_install
+    _ret=$?
+    if [ "$_ret" -eq 0 ]; then
+        _display "$0 successfully installed pkgutil"
+    else
+        _error "$0 failed to install pkgutil, retcode $_ret"
+    fi
+    cd "${oldpwd}" || exit
+fi
+
+# creating the symbolic link below helps stop weirdness
+if [[ ! -d /opt/csw ]];then
+    mkdir -p /opt/csw
+fi
+
+_install_pkgutil
+
+# update Solaris equivalent of Linux ld, some directories defined later
+crle -l /usr/local/lib:/opt/local/lib:/opt/csw/lib:/lib:/usr/lib
+
+#ensure directory exists for user
+mkdir -p "${HOME}/.cache/pip"
+
+## assume testzone has already been created and configured, and needs starting if
+## not already running.
+
+
+echo "test zone is ,${TEST_ZONE_NAME},"
+
+chk_test_zone=$(zoneadm list -icv | grep -v grep | grep ${TEST_ZONE_NAME})
+
+echo "chk test zone is ,${chk_test_zone},"
+
+if [[ -n "${chk_test_zone}" ]]; then
+    zonecfg -z ${TEST_ZONE_NAME} info
+    ifconfig -a
+    if [[ "${ARCH}" = 'i86pc' ]]; then
+        ## Intel using Virtual Box and need to adjust ip address
+        ZONE_IPADDR=$(./generate_zoneip)
+        echo "Intel ZONE IP Addr is ${ZONE_IPADDR}"
+        ./swap_zone_ip_addr "${TEST_ZONE_NAME}" "${DEFAULT_INTEL_ZONE_IP_ADDR}" "${ZONE_IPADDR}"
+        ./setup_zone "${TEST_ZONE_NAME}" "${ZONE_IPADDR}"
+    else
+        ## assume on sparc the ip address is already set, and nothing should affect it
+        ./setup_zone "${TEST_ZONE_NAME}" 'bad_addr'
+    fi
+    ifconfig -a
+fi

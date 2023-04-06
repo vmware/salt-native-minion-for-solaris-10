@@ -1,0 +1,13 @@
+--- util.py	    2021-01-08 17:01:58.417014094 +0000
++++ util.py.new 2021-01-08 17:03:21.843483945 +0000
+@@ -238,6 +238,10 @@
+                     line = line.strip()
+                     if line.startswith(b'Default Library Path (ELF):'):
+                         paths = os.fsdecode(line).split()[4]
++                    elif line.startswith(b'Default Library Path:'):
++                        ## allow for Solaris 11.4 output
++                        paths = os.fsdecode(line).split()[3]
++            
+ 
+             if not paths:
+                 return None

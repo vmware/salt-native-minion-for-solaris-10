@@ -1,0 +1,13 @@
+BASEDIR=/
+RSTATES=S s 1 2 3
+ISTATES=S s 1 2 3
+EMAIL=packaging@saltstack.com
+PSTAMP=SALT_CURR_DATE
+VENDOR=SaltStack
+CATEGORY=utility
+CLASSES=none
+ARCH=SALT_PKG_ARCH
+VERSION=SALT_CURR_VERSION
+NAME=Salt Minion, Tiamat Build
+PKG=salt
+

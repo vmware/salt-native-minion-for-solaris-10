@@ -1,0 +1,6 @@
+#!/usr/bin/bash
+pkgadd -d http://get.opencsw.org/now<<@EOF
+all
+y
+y
+@EOF

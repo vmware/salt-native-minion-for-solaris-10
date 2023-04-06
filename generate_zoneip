@@ -1,0 +1,127 @@
+#!/usr/bin/bash
+# Copyright 2019-2022 VMware, Inc.
+# SPDX-License-Identifier: Apache-2
+
+# shellcheck disable=SC2002,SC2001,SC2034
+
+set -o functrace
+set -o pipefail
+
+## using bash for now, not path is for Solaris opencsw
+## run this script as root
+
+# SCRIPT_VERSION='2022.11.17.01'
+
+
+## helper functions
+
+_timestamp() {
+    date "+%Y-%m-%d %H:%M:%S:"
+}
+
+_log() {
+    echo "$1" | sed "s/^/$(_timestamp) /" >>"${LOGGING}"
+}
+
+# Both echo and log
+_display() {
+    echo "$1"
+    _log "$1"
+}
+
+_error() {
+    msg="ERROR: $1"
+    echo "$msg" 1>&2
+    echo "$(_timestamp) $msg" >>"${LOGGING}"
+    echo "One or more errors found. See ${LOGGING} for details." 1>&2
+    exit 1
+}
+
+_warning() {
+    msg="WARNING: $1"
+    echo "$msg" 1>&2
+    echo "$(_timestamp) $msg" >>"${LOGGING}"
+}
+
+_usage() {
+    echo "usage: $0 "
+    echo "    return Ipv4 address to use with a Solaris 10 zone on Intel"
+    echo " "
+    echo "    basic operation assumes that the primary adapter is "
+    echo "    using a DHCP supplied IPv4 address, we cheat"
+    echo "    we use that DHCP supplied IPv4 address plus one for the zone"
+    echo "    for example:"
+    echo "      DHCP supplied IPv4 address 192.168.0.125"
+    echo "       cheated zone IPv4 address 192.168.0.126"
+    echo " "
+    echo "    this is for GitLab Virtual Box running Solaris 10 Intel"
+    echo "    the Solaris 10 Sparc machine is handled by a different method"
+    echo "    whereby a valid Ipv4 address provided by IT dept. is used."
+    echo " "
+}
+
+
+## work functions
+
+
+
+#################################### MAIN ####################################
+
+## static definitions
+
+CURRDIR=$(pwd)
+
+oldpwd=${CURRDIR}
+
+#check platform
+ARCH_x86="i86pc"
+ARCH_SPARC="sun4u"
+ARCH=
+
+if [[ $(uname -m) = 'i86pc' ]];then
+    ARCH=${ARCH_x86}
+    ARCH_PROC='amd64'
+    NET_NIC='e1000g0'
+elif [[ $(uname -m) = 'sun4u' ]]; then
+    ARCH=${ARCH_SPARC}
+    ARCH_PROC='sparcv9'
+    NET_NIC='hme0'
+else
+    _error "$0 does not support this platform"
+fi
+
+# set logging infomation
+## want verbose while developing
+VERBOSE=1
+LOGGING="/dev/null"
+
+log_file_format="${CURRDIR}/$0-${OSRELEASE}-${ARCH}.%Y%m%d%H%M%S.log"
+log_file="$(date \"+"${log_file_format}"\")"
+
+if [[ ${VERBOSE} -ne 0 ]];then
+    LOGGING="${log_file}"
+else
+LOGGING="/dev/null"
+fi
+
+export oldpwd ARCH ARCH_PROC
+export PATH=/usr/sbin:/usr/bin:/usr/sfw/bin:/usr/ccs/bin
+
+## _display "$0: PATH is now set to '$PATH'"
+
+if [[ $# -gt 0  || (! $(uname -m) = 'i86pc') ]];then
+    _usage
+    exit 0
+fi
+
+DHCP_IPADDR=$(cat /etc/inet/ipnodes  | grep DHCP | awk '{print $1}')
+OCTET_1=$(echo "${DHCP_IPADDR}" | cut -d '.' -f 1)
+OCTET_2=$(echo "${DHCP_IPADDR}" | cut -d '.' -f 2)
+OCTET_3=$(echo "${DHCP_IPADDR}" | cut -d '.' -f 3)
+OCTET_4=$(echo "${DHCP_IPADDR}" | cut -d '.' -f 4)
+
+# increment the octet
+OCTET_4=$((OCTET_4+1))
+
+#output the result faked IPv4 address
+echo "${OCTET_1}.${OCTET_2}.${OCTET_3}.${OCTET_4}"

@@ -1,0 +1,13 @@
+--- socketmodule.c	Sat Jun 27 02:35:53 2020
++++ socketmodule.c.new	Wed Feb 17 15:56:41 2021
+@@ -5223,6 +5223,10 @@
+ extern int sethostname(const char *, size_t);
+ #endif
+ 
++#if (defined(__sun) && defined(__SVR4))
++extern int sethostname(const char *, size_t);
++#endif
++
+     if (!PyArg_ParseTuple(args, "S:sethostname", &hnobj)) {
+         PyErr_Clear();
+         if (!PyArg_ParseTuple(args, "O&:sethostname",
