@@ -22,7 +22,7 @@ bcrypt==3.2.2
 importlib-metadata==4.11.3
 msgpack==1.0.3
 
-SALT_LOCATION
+# uncomment before use SALT_LOCATION
 
 distro
 
